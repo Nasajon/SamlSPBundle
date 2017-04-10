@@ -5,16 +5,13 @@ namespace AerialShip\SamlSPBundle\Bridge;
 use AerialShip\LightSaml\Binding\BindingDetector;
 use Symfony\Component\HttpFoundation\Request;
 
-
-class BindingManager extends BindingDetector
-{
+class BindingManager extends BindingDetector {
 
     /**
      * @param Request $request
      * @return null|string
      */
-    public function getBindingType(Request $request)
-    {
+    public function getBindingType(Request $request) {
         $bindingRequest = $this->getBindingRequest($request);
         $bindingType = $this->getBinding($bindingRequest);
         return $bindingType;
@@ -25,27 +22,26 @@ class BindingManager extends BindingDetector
      * @param $bindingType
      * @return \AerialShip\LightSaml\Model\Protocol\Message|null
      */
-    public function receive(Request $request, &$bindingType = null)
-    {
+    public function receive(Request $request, &$bindingType = null) {
         $result = null;
         $bindingRequest = $this->getBindingRequest($request);
+
         $bindingType = $this->getBinding($bindingRequest);
         if ($bindingType) {
             $binding = $this->instantiate($bindingType);
             $result = $binding->receive($bindingRequest);
-        }else {
-            throw new \RuntimeException('BindingType não definido : ' . get_class($bindingRequest) . ' -> ' . $bindingRequest->getQueryString() . ' -> ' . json_encode($request->headers->all()));
+        } else {
+            throw new \AerialShip\SamlSPBundle\Error\InvalidResponseException('BindingType não definido : ' . $request->getMethod() . ' -> ' . $bindingRequest->getQueryString() . ' -> ' . json_encode($request->headers->all()));
         }
+
         return $result;
     }
-
 
     /**
      * @param Request $request
      * @return \AerialShip\LightSaml\Binding\Request
      */
-    public function getBindingRequest(Request $request)
-    {
+    public function getBindingRequest(Request $request) {
         $result = new \AerialShip\LightSaml\Binding\Request();
         // must be taken unmodified from server since getQueryString() capitalized urlenocoded escape chars, ie. %2f becomes %2F
         $result->setQueryString($request->server->get('QUERY_STRING'));
@@ -55,5 +51,4 @@ class BindingManager extends BindingDetector
         return $result;
     }
 
-
-} 
+}
