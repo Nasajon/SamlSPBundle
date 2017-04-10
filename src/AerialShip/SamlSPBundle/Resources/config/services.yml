@@ -61,8 +61,8 @@ services:
     aerial_ship_saml_sp.service_info:
         class: %aerial_ship_saml_sp.service_info.class%
         arguments:
-            - providerID
-            - authenticateServiceID
+            - "providerID"
+            - "authenticateServiceID"
             - "@aerial_ship_saml_sp.sp_entity_descriptor_builder"
             - "@aerial_ship_saml_sp.idp_entity_descriptor_provider"
             - "@aerial_ship_saml_sp.sp_meta_provider"
@@ -142,7 +142,6 @@ services:
             - "@aerial_ship_saml_sp.state.store.sso"
             - "@aerial_ship_saml_sp.service_info_collection"
             - "@security.http_utils"
-            - "@security.context"
         public: false
         abstract: true
 
@@ -212,3 +211,6 @@ services:
         arguments: [~]
         public: false
         abstract: true
+
+
+
