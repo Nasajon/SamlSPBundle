@@ -9,15 +9,17 @@ use AerialShip\LightSaml\Model\XmlDSig\SignatureXmlValidator;
 use AerialShip\LightSaml\Security\KeyHelper;
 use AerialShip\SamlSPBundle\Config\ServiceInfo;
 use AerialShip\SamlSPBundle\Config\ServiceInfoCollection;
+use AerialShip\SamlSPBundle\Error\InvalidResponseException;
 use AerialShip\SamlSPBundle\RelyingParty\RelyingPartyInterface;
 use AerialShip\SamlSPBundle\State\Request\RequestStateStoreInterface;
 use AerialShip\SamlSPBundle\State\SSO\SSOStateStoreInterface;
+use Symfony\Bundle\FrameworkBundle\Routing\Router;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
 
+class AssertionConsumer implements RelyingPartyInterface {
 
-class AssertionConsumer implements RelyingPartyInterface
-{
     /** @var BindingManager  */
     protected $bindingManager;
 
@@ -30,73 +32,68 @@ class AssertionConsumer implements RelyingPartyInterface
     /** @var SSOStateStoreInterface  */
     protected $ssoStore;
 
+    /** @var \Router */
+    protected $router;
 
-
-
-    public function __construct(BindingManager $bindingManager,
-        ServiceInfoCollection $serviceInfoCollection,
-        RequestStateStoreInterface $requestStore,
-        SSOStateStoreInterface $ssoStore
+    public function __construct(BindingManager $bindingManager, ServiceInfoCollection $serviceInfoCollection, RequestStateStoreInterface $requestStore, SSOStateStoreInterface $ssoStore, Router $router
     ) {
         $this->bindingManager = $bindingManager;
         $this->serviceInfoCollection = $serviceInfoCollection;
         $this->requestStore = $requestStore;
         $this->ssoStore = $ssoStore;
+        $this->router = $router;
     }
 
-
-
     /**
-     * @param \Symfony\Component\HttpFoundation\Request $request
+     * @param Request $request
      * @return bool
      */
-    public function supports(Request $request)
-    {
+    public function supports(Request $request) {
         $result = $request->attributes->get('check_path') == $request->getPathInfo();
         return $result;
     }
 
     /**
-     * @param \Symfony\Component\HttpFoundation\Request $request
-     * @throws \RuntimeException
-     * @throws \Symfony\Component\Security\Core\Exception\AuthenticationException
-     * @throws \InvalidArgumentException if cannot manage the Request
-     * @return \Symfony\Component\HttpFoundation\RedirectResponse|SamlSpInfo
+     * @param Request $request
+     * @throws RuntimeException
+     * @throws AuthenticationException
+     * @throws InvalidArgumentException if cannot manage the Request
+     * @return RedirectResponse|SamlSpInfo
      */
-    public function manage(Request $request)
-    {
-        if (!$this->supports($request)) {
-            throw new \InvalidArgumentException();
+    public function manage(Request $request) {
+        try {
+            if (!$this->supports($request)) {
+                throw new InvalidArgumentException();
+            }
+
+
+            $response = $this->getSamlResponse($request);
+            $serviceInfo = $this->serviceInfoCollection->findByIDPEntityID($response->getIssuer());
+
+            $serviceInfo->getSpProvider()->setRequest($request);
+            $this->validateResponse($serviceInfo, $response);
+
+            $assertion = $this->getSingleAssertion($response);
+
+            $this->createSSOState($serviceInfo, $assertion);
+
+            return new SamlSpInfo(
+                    $serviceInfo->getAuthenticationService(), $assertion->getSubject()->getNameID(), $assertion->getAllAttributes(), $assertion->getAuthnStatement()
+            );
+        } catch (InvalidResponseException $e) {
+            return new RedirectResponse($this->router->generate("aerial_ship_saml_sp.security.login"));
         }
-
-        $response = $this->getSamlResponse($request);
-        $serviceInfo = $this->serviceInfoCollection->findByIDPEntityID($response->getIssuer());
-
-        $serviceInfo->getSpProvider()->setRequest($request);
-        $this->validateResponse($serviceInfo, $response);
-
-        $assertion = $this->getSingleAssertion($response);
-
-        $this->createSSOState($serviceInfo, $assertion);
-
-        return new SamlSpInfo($serviceInfo->getAuthenticationService(),
-            $assertion->getSubject()->getNameID(),
-            $assertion->getAllAttributes(),
-            $assertion->getAuthnStatement()
-        );
     }
 
-
-    protected function getSamlResponse(Request $request)
-    {
+    protected function getSamlResponse(Request $request) {
         $bindingType = null;
         /** @var Response $response */
         $response = $this->bindingManager->receive($request, $bindingType);
         if ($bindingType == Bindings::SAML2_HTTP_REDIRECT) {
-            throw new \RuntimeException('SAML protocol response cannot be sent via binding HTTP REDIRECT');
+            throw new RuntimeException('SAML protocol response cannot be sent via binding HTTP REDIRECT');
         }
         if (!$response instanceof Response) {
-            throw new \RuntimeException('Expected Protocol/Response type but got '.($response ? get_class($response) : 'nothing'));
+            throw new RuntimeException('Expected Protocol/Response type but got ' . ($response ? get_class($response) : 'nothing'));
         }
 
         return $response;
@@ -105,25 +102,22 @@ class AssertionConsumer implements RelyingPartyInterface
     /**
      * @param Response $response
      * @return Assertion
-     * @throws \RuntimeException
+     * @throws RuntimeException
      */
-    protected function getSingleAssertion(Response $response)
-    {
+    protected function getSingleAssertion(Response $response) {
         $arr = $response->getAllAssertions();
         if (empty($arr)) {
-            throw new \RuntimeException('No assertion received');
+            throw new RuntimeException('No assertion received');
         }
         $assertion = array_pop($arr);
 
         return $assertion;
     }
 
-
-    protected function createSSOState(ServiceInfo $serviceInfo, Assertion $assertion)
-    {
+    protected function createSSOState(ServiceInfo $serviceInfo, Assertion $assertion) {
         $ssoState = $this->ssoStore->create();
         $ssoState->setNameID($assertion->getSubject()->getNameID()->getValue());
-        $ssoState->setNameIDFormat($assertion->getSubject()->getNameID()->getFormat() ?: '');
+        $ssoState->setNameIDFormat($assertion->getSubject()->getNameID()->getFormat() ? : '');
         $ssoState->setAuthenticationServiceName($serviceInfo->getAuthenticationService());
         $ssoState->setProviderID($serviceInfo->getProviderID());
         $ssoState->setSessionIndex($assertion->getAuthnStatement()->getSessionIndex());
@@ -132,10 +126,10 @@ class AssertionConsumer implements RelyingPartyInterface
         return $ssoState;
     }
 
-
     protected function validateResponse(ServiceInfo $metaProvider, Response $response) {
+
         if (!$metaProvider) {
-            throw new \RuntimeException('Unknown issuer '.$response->getIssuer());
+            throw new RuntimeException('Unknown issuer ' . $response->getIssuer());
         }
         $this->validateState($response);
         $this->validateStatus($response);
@@ -149,10 +143,10 @@ class AssertionConsumer implements RelyingPartyInterface
         if ($response->getInResponseTo()) {
             $requestState = $this->requestStore->get($response->getInResponseTo());
             if (!$requestState) {
-                throw new \RuntimeException('Got response to a request that was not made');
+                throw new RuntimeException('Got response to a request that was not made');
             }
             if ($requestState->getDestination() != $response->getIssuer()) {
-                throw new \RuntimeException('Got response from different issuer');
+                throw new RuntimeException('Got response from different issuer');
             }
             $this->requestStore->remove($requestState);
         }
@@ -161,11 +155,11 @@ class AssertionConsumer implements RelyingPartyInterface
     protected function validateStatus(Response $response) {
         if (!$response->getStatus()->isSuccess()) {
             $status = $response->getStatus()->getStatusCode()->getValue();
-            $status .= "\n".$response->getStatus()->getMessage();
+            $status .= "\n" . $response->getStatus()->getMessage();
             if ($response->getStatus()->getStatusCode()->getChild()) {
-                $status .= "\n".$response->getStatus()->getStatusCode()->getChild()->getValue();
+                $status .= "\n" . $response->getStatus()->getStatusCode()->getChild()->getValue();
             }
-            throw new AuthenticationException('Unsuccessful SAML response: '.$status);
+            throw new AuthenticationException('Unsuccessful SAML response: ' . $status);
         }
     }
 
@@ -177,16 +171,14 @@ class AssertionConsumer implements RelyingPartyInterface
         }
     }
 
-    protected function validateAssertion(ServiceInfo $serviceInfo, Assertion $assertion)
-    {
+    protected function validateAssertion(ServiceInfo $serviceInfo, Assertion $assertion) {
         $this->validateAssertionSignature($assertion, $serviceInfo);
         $this->validateAssertionTime($assertion);
         $this->validateAssertionSubjectTime($assertion);
         $this->validateSubjectConfirmationRecipient($assertion, $serviceInfo);
     }
 
-    protected function validateAssertionSignature(Assertion $assertion, ServiceInfo $serviceInfo)
-    {
+    protected function validateAssertionSignature(Assertion $assertion, ServiceInfo $serviceInfo) {
         /** @var  $signature SignatureXmlValidator */
         if ($signature = $assertion->getSignature()) {
             $keys = $this->getAllKeys($serviceInfo);
@@ -196,13 +188,11 @@ class AssertionConsumer implements RelyingPartyInterface
         }
     }
 
-
     /**
      * @param Assertion $assertion
-     * @throws \Symfony\Component\Security\Core\Exception\AuthenticationException
+     * @throws AuthenticationException
      */
-    protected function validateAssertionTime(Assertion $assertion)
-    {
+    protected function validateAssertionTime(Assertion $assertion) {
         if ($assertion->getNotBefore() && $assertion->getNotBefore() > time() + 60) {
             throw new AuthenticationException('Received an assertion that is valid in the future. Check clock synchronization on IdP and SP');
         }
@@ -213,10 +203,9 @@ class AssertionConsumer implements RelyingPartyInterface
 
     /**
      * @param Assertion $assertion
-     * @throws \Symfony\Component\Security\Core\Exception\AuthenticationException
+     * @throws AuthenticationException
      */
-    protected function validateAssertionSubjectTime(Assertion $assertion)
-    {
+    protected function validateAssertionSubjectTime(Assertion $assertion) {
         $arrSubjectConfirmations = $assertion->getSubject()->getSubjectConfirmations();
         if ($arrSubjectConfirmations) {
             foreach ($arrSubjectConfirmations as $subjectConfirmation) {
@@ -232,9 +221,7 @@ class AssertionConsumer implements RelyingPartyInterface
         }
     }
 
-
-    protected function validateSubjectConfirmationRecipient(Assertion $assertion, ServiceInfo $serviceInfo)
-    {
+    protected function validateSubjectConfirmationRecipient(Assertion $assertion, ServiceInfo $serviceInfo) {
         $arrACS = $serviceInfo->getSpProvider()
                 ->getEntityDescriptor()
                 ->getFirstSpSsoDescriptor()
@@ -249,9 +236,8 @@ class AssertionConsumer implements RelyingPartyInterface
             }
             if (!$ok) {
                 throw new AuthenticationException(
-                    sprintf('Invalid Assertion SubjectConfirmation Recipient %s',
-                        $subjectConfirmation->getData()->getRecipient()
-                    )
+                sprintf('Invalid Assertion SubjectConfirmation Recipient %s', $subjectConfirmation->getData()->getRecipient()
+                )
                 );
             }
         }
@@ -259,10 +245,9 @@ class AssertionConsumer implements RelyingPartyInterface
 
     /**
      * @param ServiceInfo $metaProvider
-     * @return \XMLSecurityKey[]
+     * @return XMLSecurityKey[]
      */
-    protected function getAllKeys(ServiceInfo $metaProvider)
-    {
+    protected function getAllKeys(ServiceInfo $metaProvider) {
         $result = array();
         $edIDP = $metaProvider->getIdpProvider()->getEntityDescriptor();
         if ($edIDP) {
@@ -281,11 +266,10 @@ class AssertionConsumer implements RelyingPartyInterface
     }
 
     /**
-     * @param \AerialShip\SamlSPBundle\Config\ServiceInfo $metaProvider
-     * @return null|\XMLSecurityKey
+     * @param ServiceInfo $metaProvider
+     * @return null|XMLSecurityKey
      */
-    protected function getSigningKey(ServiceInfo $metaProvider)
-    {
+    protected function getSigningKey(ServiceInfo $metaProvider) {
         $result = null;
         $edIDP = $metaProvider->getIdpProvider()->getEntityDescriptor();
         if ($edIDP) {
@@ -300,9 +284,8 @@ class AssertionConsumer implements RelyingPartyInterface
                 }
             }
         }
-        
+
         return $result;
     }
-
 
 }

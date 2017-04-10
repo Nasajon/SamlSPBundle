@@ -1,4 +1,3 @@
-
 parameters:
     # Meta Providers ----------------------------------------
     aerial_ship_saml_sp.service_info_collection.class: AerialShip\SamlSPBundle\Config\ServiceInfoCollection
@@ -115,6 +114,7 @@ services:
             - "@aerial_ship_saml_sp.service_info_collection"
             - "@aerial_ship_saml_sp.state.store.request"
             - "@aerial_ship_saml_sp.state.store.sso"
+            - "@router"
         public: false
         abstract: true
 
