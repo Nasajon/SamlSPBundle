@@ -19,34 +19,27 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Security\Http\HttpUtils;
 
-class LogoutReceiveRequest extends LogoutBase implements RelyingPartyInterface
-{
+class LogoutReceiveRequest extends LogoutBase implements RelyingPartyInterface {
+
     /** @var BindingManager */
     protected $bindingManager;
 
     /** @var ServiceInfoCollection  */
     protected $serviceInfoCollection;
 
-
-
     public function __construct(
-        BindingManager $bindingManager,
-        SSOStateStoreInterface $ssoStore,
-        ServiceInfoCollection $serviceInfoCollection,
-        HttpUtils $httpUtils
+    BindingManager $bindingManager, SSOStateStoreInterface $ssoStore, ServiceInfoCollection $serviceInfoCollection, HttpUtils $httpUtils
     ) {
         parent::__construct($ssoStore, $httpUtils);
         $this->bindingManager = $bindingManager;
         $this->serviceInfoCollection = $serviceInfoCollection;
     }
 
-
     /**
      * @param \Symfony\Component\HttpFoundation\Request $request
      * @return bool
      */
-    public function supports(Request $request)
-    {
+    public function supports(Request $request) {
         if ($request->attributes->get('logout_path') != $request->getPathInfo()) {
             return false;
         }
@@ -62,14 +55,13 @@ class LogoutReceiveRequest extends LogoutBase implements RelyingPartyInterface
      * @throws \InvalidArgumentException if cannot manage the Request
      * @return \Symfony\Component\HttpFoundation\Response|SamlSpInfo|null
      */
-    public function manage(Request $request)
-    {
+    public function manage(Request $request) {
         if (!$this->supports($request)) {
             throw new \InvalidArgumentException('Unsupported request');
         }
 
         $logoutRequest = $this->receiveRequest($request);
-        $serviceInfo = $this->getServiceInfo($logoutRequest);
+        $serviceInfo = $this->getServiceInfo($logoutRequest, $request);
         $this->validateLogoutRequest($serviceInfo, $logoutRequest);
         $arrStates = $this->getSSOState($serviceInfo, $logoutRequest->getNameID()->getValue(), $logoutRequest->getSessionIndex());
         $this->deleteSSOState($arrStates);
@@ -95,14 +87,12 @@ class LogoutReceiveRequest extends LogoutBase implements RelyingPartyInterface
         return new Response($xml, 200, array('Content-Type' => 'application/xml'));
     }
 
-
     /**
      * @param Request $request
      * @return LogoutRequest
      * @throws \InvalidArgumentException
      */
-    protected function receiveRequest(Request $request)
-    {
+    protected function receiveRequest(Request $request) {
         /** @var  $logoutRequest LogoutRequest */
         $logoutRequest = $this->bindingManager->receive($request);
         if (!$logoutRequest || !$logoutRequest instanceof LogoutRequest) {
@@ -112,18 +102,18 @@ class LogoutReceiveRequest extends LogoutBase implements RelyingPartyInterface
         return $logoutRequest;
     }
 
-
     /**
      * @param LogoutRequest $logoutRequest
      * @return ServiceInfo|null
      * @throws \RuntimeException
      */
-    protected function getServiceInfo(LogoutRequest $logoutRequest)
-    {
+    protected function getServiceInfo(LogoutRequest $logoutRequest, Request $request) {
         $serviceInfo = $this->serviceInfoCollection->findByIDPEntityID($logoutRequest->getIssuer());
         if (!$serviceInfo) {
-            throw new \RuntimeException('Got logout request from unknown IDP: '.$logoutRequest->getIssuer());
+            throw new \RuntimeException('Got logout request from unknown IDP: ' . $logoutRequest->getIssuer());
         }
+
+        $serviceInfo->getSpProvider()->setRequest($request);
 
         return $serviceInfo;
     }
@@ -133,8 +123,7 @@ class LogoutReceiveRequest extends LogoutBase implements RelyingPartyInterface
      * @param LogoutRequest $logoutRequest
      * @throws \RuntimeException
      */
-    protected function validateLogoutRequest(ServiceInfo $serviceInfo, LogoutRequest $logoutRequest)
-    {
+    protected function validateLogoutRequest(ServiceInfo $serviceInfo, LogoutRequest $logoutRequest) {
         $idp = $serviceInfo->getIdpProvider()->getEntityDescriptor();
         $keyDescriptors = $idp->getFirstIdpSsoDescriptor()->getKeyDescriptors();
         if (empty($keyDescriptors)) {
@@ -155,4 +144,5 @@ class LogoutReceiveRequest extends LogoutBase implements RelyingPartyInterface
 
         $signature->validateMulti($keys);
     }
+
 }
