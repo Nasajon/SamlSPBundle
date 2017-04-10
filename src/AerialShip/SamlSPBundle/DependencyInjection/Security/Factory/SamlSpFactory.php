@@ -8,7 +8,6 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\DefinitionDecorator;
 use Symfony\Component\DependencyInjection\Reference;
 
-
 class SamlSpFactory extends AbstractFactory
 {
 
@@ -66,16 +65,15 @@ class SamlSpFactory extends AbstractFactory
                                 ->arrayNode('signing')->addDefaultsIfNotSet()
                                     ->children()
                                         ->scalarNode('id')->cannotBeEmpty()->end()
-                                        ->scalarNode('cert_file')->cannotBeEmpty()->end()
-                                        ->scalarNode('key_file')->cannotBeEmpty()->end()
+                                        ->scalarNode('cert_file')->end()
+                                        ->scalarNode('key_file')->end()
                                         ->scalarNode('key_pass')->end()
                                     ->end()
                                 ->end()
                                 ->arrayNode('meta')->addDefaultsIfNotSet()
                                     ->children()
                                         ->scalarNode('id')->end()
-                                        ->enumNode('name_id_format')
-                                            ->values(array('persistent', 'transient'))
+                                        ->scalarNode('name_id_format')
                                             ->cannotBeEmpty()
                                             ->defaultValue('persistent')
                                         ->end()
@@ -175,13 +173,12 @@ class SamlSpFactory extends AbstractFactory
         if (isset($config['id'])) {
             $container->setAlias($serviceID, $config['id']);
         } else if (isset($config['cert_file']) &&
-                isset($config['key_file']) &&
-                isset($config['key_pass'])
+                isset($config['key_file'])
         ) {
             $service = new DefinitionDecorator('aerial_ship_saml_sp.sp_signing.file');
             $service->replaceArgument(1, $config['cert_file']);
             $service->replaceArgument(2, $config['key_file']);
-            $service->replaceArgument(3, $config['key_pass']);
+            $service->replaceArgument(3, array_key_exists('key_pass', $config) ? $config['key_pass'] : null);
             $container->setDefinition($serviceID, $service);
         } else {
             $service = new DefinitionDecorator('aerial_ship_saml_sp.sp_signing.null');
@@ -429,6 +426,4 @@ class SamlSpFactory extends AbstractFactory
 
         return $entryPointId;
     }
-
-
-} 
+}
