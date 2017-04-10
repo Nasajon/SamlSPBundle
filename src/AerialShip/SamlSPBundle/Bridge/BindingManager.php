@@ -33,6 +33,8 @@ class BindingManager extends BindingDetector
         if ($bindingType) {
             $binding = $this->instantiate($bindingType);
             $result = $binding->receive($bindingRequest);
+        }else {
+            throw new \RuntimeException('BindingType não definido : ' . get_class($bindingRequest) . ' -> ' . $bindingRequest->getQueryString() . ' -> ' . json_encode($request->headers->all()));
         }
         return $result;
     }
